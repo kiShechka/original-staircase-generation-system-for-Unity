@@ -9,15 +9,172 @@ using UnityEditor;
 
 public class generateStaircase : MonoBehaviour
 {
-    [Header("Настройки дублирования")]
+    [Header("Настройки дублирования и поворота")]
     [SerializeField] private GameObject originalObject;
+    [Range(0, 100)]
     [SerializeField] private int duplicateCount = 11;
     [SerializeField] private Vector3 offset = new Vector3(0f, 1f, 1f);
-    [SerializeField] public float offset1 = 0.1f;
-    [SerializeField] public float offsethight = 0.1f;
-    [SerializeField] private float finalRotationY = 90f;
+    
+    [Header("Настройки спирали")]
+    [Range(0.001f, 100f)]
+    [SerializeField] public float offset1 = 15f;
+    [SerializeField] public float offsethight = 25f;
+    [SerializeField] private float finalRotationY = 90f; 
     [SerializeField] private float positionMultiplier = 0.1f; 
     private int generationCounter = 1;
+    private GameObject currentGenerationContainer;
+    private bool isInitialized = false;
+    private List<GameObject> currentDuplicates = new List<GameObject>();
+
+    private bool rotationApplied = false;
+    private bool spiralApplied = false;
+
+    private int lastDuplicateCount;
+    private Vector3 lastOffset;
+    private float lastOffset1;
+    private float lastOffsethight;
+    private float lastFinalRotationY;
+    private float lastPositionMultiplier;
+
+
+
+
+    private void Start()
+    {
+        SaveCurrentValues();
+    }
+
+    private void SaveCurrentValues()
+    {
+        lastDuplicateCount = duplicateCount;
+        lastOffset = offset;
+        lastOffset1 = offset1;
+        lastOffsethight = offsethight;
+        lastFinalRotationY = finalRotationY;
+        lastPositionMultiplier = positionMultiplier;
+    }
+
+    private void Update()
+{
+    #if UNITY_EDITOR
+    if (!Application.isPlaying && isInitialized)
+    {
+        CheckForChanges();
+    }
+    #endif
+}
+
+private void CheckForChanges()
+{
+    bool hasChanged = false;
+
+    if (duplicateCount != lastDuplicateCount)
+    {
+        if (duplicateCount > lastDuplicateCount)
+        {
+            AddDuplicates(duplicateCount - lastDuplicateCount);
+        }
+        else
+        {
+            RemoveDuplicates(lastDuplicateCount - duplicateCount);
+        }
+        hasChanged = true;
+    }
+
+    if (rotationApplied && (offset != lastOffset || finalRotationY != lastFinalRotationY  ||
+        positionMultiplier != lastPositionMultiplier))
+    {
+        UpdateRotationAroundOriginal();
+        hasChanged = true;
+    }
+
+    if (spiralApplied && (offset1 != lastOffset1 || offsethight != lastOffsethight))
+    {
+        UpdateSpiralGeneration();
+        hasChanged = true;
+    }
+
+    if (hasChanged)
+    {
+        SaveCurrentValues();
+    }
+}
+
+private void OnValidate()
+{
+    #if UNITY_EDITOR
+    if (!Application.isPlaying && isInitialized)
+    {
+        EditorApplication.delayCall += () => {
+            if (this != null)
+            {
+                CheckForChanges();
+            }
+        };
+    }
+    #endif
+}
+
+private void UpdateAllGenerations()
+{
+    if (currentGenerationContainer != null && currentDuplicates.Count > 0)
+    {
+        UpdateBasicDuplicates();
+    }
+}
+
+    private void UpdateBasicDuplicates()
+    {
+        if (currentDuplicates.Count == 0) return;
+
+        var sortedDuplicates = currentDuplicates.OrderBy(go => GetDuplicateIndex(go)).ToList();
+        for (int i = 0; i < sortedDuplicates.Count; i++)
+        {
+            GameObject duplicate = sortedDuplicates[i];
+            Vector3 basePosition = originalObject.transform.position + (offset * (i + 1));
+            duplicate.transform.position = basePosition;
+            duplicate.transform.rotation = originalObject.transform.rotation;
+        }
+    }
+
+private void AddDuplicates(int countToAdd)
+{
+    if (currentDuplicates.Count == 0) return;
+
+    GameObject lastDuplicate = currentDuplicates.Last();
+    for (int i = 0; i < countToAdd; i++)
+    {
+        GameObject duplicate = Instantiate(lastDuplicate);
+        duplicate.name = $"{originalObject.name}_Duplicate_{currentDuplicates.Count + 1}";
+        duplicate.transform.position = lastDuplicate.transform.position + offset;
+        duplicate.transform.SetParent(currentGenerationContainer.transform);
+        duplicate.transform.rotation = lastDuplicate.transform.rotation;
+        currentDuplicates.Add(duplicate);
+        lastDuplicate = duplicate;
+    }
+    
+
+    UpdateAllGenerations();
+}
+
+private void RemoveDuplicates(int countToRemove)
+{
+    if (currentDuplicates.Count <= countToRemove) return;
+
+    for (int i = 0; i < countToRemove; i++)
+    {
+        GameObject toRemove = currentDuplicates.Last();
+        currentDuplicates.RemoveAt(currentDuplicates.Count - 1);
+        if (toRemove != null)
+            DestroyImmediate(toRemove);
+    }
+    for (int i = 0; i < currentDuplicates.Count; i++)
+    {
+        currentDuplicates[i].name = $"{originalObject.name}_Duplicate_{i + 1}";
+    }
+    
+    UpdateAllGenerations();
+}
 
 
 
@@ -25,15 +182,18 @@ public class generateStaircase : MonoBehaviour
     [ContextMenu("Сгенерировать дубликаты")]
     public void GenerateDuplicates()
     {
+
+         ClearDuplicates();
         if (originalObject == null)
         {
             Debug.LogError("Назначьте оригинальный объект в инспекторе!");
             return;
         }
 
-        GameObject generationContainer = new GameObject($"CollectionStep{generationCounter}");
+
+        currentGenerationContainer = new GameObject($"CollectionStep{generationCounter}");
         generationCounter++;
-        generationContainer.transform.position = originalObject.transform.position;
+        currentGenerationContainer.transform.position = originalObject.transform.position;
 
         GameObject current = originalObject;
 
@@ -42,27 +202,38 @@ public class generateStaircase : MonoBehaviour
             GameObject duplicate = Instantiate(current);
             duplicate.name = $"{originalObject.name}_Duplicate_{i + 1}";
             duplicate.transform.position = current.transform.position + offset;
-            duplicate.transform.SetParent(generationContainer.transform);
+            duplicate.transform.SetParent(currentGenerationContainer.transform);
             current = duplicate;
+            currentDuplicates.Add(duplicate);
         }
 
+        rotationApplied = false;
+        spiralApplied = false;
+
+        isInitialized = true;
+        SaveCurrentValues();
+        UpdateAllGenerations();
         Debug.Log($"Создано {duplicateCount} дубликатов!");
     }
-
-
-
-
 
     [ContextMenu("Очистить дубликаты")]
     public void ClearDuplicates()
     {
-        if (originalObject == null) return;
-
+    if (currentGenerationContainer != null)
+    {
+        if (Application.isPlaying)
+            Destroy(currentGenerationContainer);
+        else
+            DestroyImmediate(currentGenerationContainer);
+        currentGenerationContainer = null;
+    }
+    if (originalObject != null)
+    {
         GameObject[] allObjects = FindObjectsOfType<GameObject>();
 
         foreach (GameObject obj in allObjects)
         {
-            if (obj != null && obj.name.StartsWith(originalObject.name + "_Duplicate"))
+            if (obj != null && obj != originalObject && obj.name.StartsWith(originalObject.name + "_Duplicate"))
             {
                 if (Application.isPlaying)
                     Destroy(obj);
@@ -71,10 +242,59 @@ public class generateStaircase : MonoBehaviour
             }
         }
     }
+    
+    currentDuplicates.Clear();
+    isInitialized = false;
+    SaveCurrentValues();
+    }
 
+    #if UNITY_EDITOR
+    [CustomEditor(typeof(generate))]
+    public class GenerateEditor : Editor
+    {
+        public override void OnInspectorGUI()
+        {
+            DrawDefaultInspector();
 
+            generate script = (generate)target;
 
+            GUILayout.Space(10);
+            GUILayout.Label("Действия", EditorStyles.boldLabel);
+            
+            if (GUILayout.Button("Сгенерировать дубликаты"))
+            {
+                script.GenerateDuplicates();
+            }
+            
+            if (GUILayout.Button("Применить поворот вокруг оригинала"))
+            {
+                script.ApplyRotationAroundOriginal();
+            }
+            
+            if (GUILayout.Button("Сгенерировать спираль"))
+            {
+                script.SpiralObjects();
+            }
+            
+            if (GUILayout.Button("Очистить дубликаты"))
+            {
+                script.ClearDuplicates();
+            }
 
+            GUILayout.Space(5);
+            
+            if (GUILayout.Button("Объединить выделенные объекты"))
+            {
+                script.CombineSelectedObjects();
+            }
+            
+            if (GUILayout.Button("Синхронизировать Blend Shapes"))
+            {
+                script.SyncBlendShapes();
+            }
+        }
+    }
+    #endif
 
     [ContextMenu("Применить поворот вокруг оригинала")]
     public void ApplyRotationAroundOriginal()
@@ -86,14 +306,14 @@ public class generateStaircase : MonoBehaviour
             Debug.LogWarning("Дубликаты не найдены! Сначала создайте дубликаты.");
             return;
         }
+        rotationApplied = true;
+        spiralApplied = false;
         duplicates = duplicates.OrderBy(go => GetDuplicateIndex(go)).ToList();
+        UpdateRotationAroundOriginal();
         Debug.Log($"Найдено {duplicates.Count} дубликатов");
         ApplyRotationAroundCenter(duplicates);
 
     }
-
-
-
 
     private List<GameObject> FindAllDuplicates()
     {
@@ -111,7 +331,6 @@ public class generateStaircase : MonoBehaviour
 
         return duplicates;
     }
-
     private int GetDuplicateIndex(GameObject duplicate)
     {
         string name = duplicate.name;
@@ -124,7 +343,6 @@ public class generateStaircase : MonoBehaviour
 
         return 0;
     }
-
     private void ApplyRotationAroundCenter(List<GameObject> duplicates)
     {
 
@@ -160,7 +378,6 @@ public class generateStaircase : MonoBehaviour
         Vector3 rotationBasedOffset = CalculatePositionOffset(currentRotationY, progress);
         duplicate.transform.position += rotationBasedOffset;
     }
-
     private void ApplyRotation(GameObject duplicate, int index)
     {
         float progress = (float)(index + 1) / duplicateCount;
@@ -169,7 +386,6 @@ public class generateStaircase : MonoBehaviour
         Quaternion targetRotation = originalObject.transform.rotation * Quaternion.Euler(0f, 0f, currentRotationY);
         duplicate.transform.rotation = targetRotation;
     }
-
     private Vector3 CalculatePositionOffset(float rotationAngle, float progress)
     {
         float direction = Mathf.Sign(rotationAngle);
@@ -179,19 +395,15 @@ public class generateStaircase : MonoBehaviour
         float offsetValue = baseOffset * progress;
         float offsetValuez = baseOffsetz * progress;
 
-        // Смещение по X и Y в зависимости от направления (если захочешь поменять rotation)
+        //если будешь менять rotation
         Vector3 localOffset = new Vector3(
             offsetValue * direction,  // X 
             offsetValuez * direction,  // Y 
-            0f   // Z    
+            0f   // Z  
         );
 
         return localOffset;
     }
-
-
-
-
 
 [ContextMenu("Объединить выделенные объекты")]
 public void CombineSelectedObjects()
@@ -211,7 +423,6 @@ private void CombineMeshes(GameObject[] objectsToCombine)
 {
     GameObject combinedObject = new GameObject("Combined_Stairs");
     combinedObject.transform.position = Vector3.zero;
-
     List<CombineInstance> combineInstances = new List<CombineInstance>();
     List<Material> materials = new List<Material>();
     foreach (GameObject obj in objectsToCombine)
@@ -230,7 +441,6 @@ private void CombineMeshes(GameObject[] objectsToCombine)
                 materials.AddRange(renderer.sharedMaterials);
             }
         }
-
         SkinnedMeshRenderer skinnedMesh = obj.GetComponent<SkinnedMeshRenderer>();
         if (skinnedMesh != null && skinnedMesh.sharedMesh != null)
         {
@@ -248,7 +458,6 @@ private void CombineMeshes(GameObject[] objectsToCombine)
             }
         }
     }
-
     if (combineInstances.Count == 0)
     {
         Debug.LogError("Нет мешей для объединения!");
@@ -257,22 +466,19 @@ private void CombineMeshes(GameObject[] objectsToCombine)
     }
 
     Debug.Log($"Найдено мешей для объединения: {combineInstances.Count}");
-
     MeshFilter combinedFilter = combinedObject.AddComponent<MeshFilter>();
     MeshRenderer combinedRenderer = combinedObject.AddComponent<MeshRenderer>();
     Mesh finalMesh = new Mesh();
     finalMesh.CombineMeshes(combineInstances.ToArray(), true);
     combinedFilter.sharedMesh = finalMesh;
-    
     if (materials.Count > 0)
-        {
-            combinedRenderer.sharedMaterials = materials.Distinct().ToArray();
-        }
-        else
-        {
-            combinedRenderer.sharedMaterial = new Material(Shader.Find("Standard"));
-        }
-
+    {
+        combinedRenderer.sharedMaterials = materials.Distinct().ToArray();
+    }
+    else
+    {
+        combinedRenderer.sharedMaterial = new Material(Shader.Find("Standard"));
+    }
     finalMesh.RecalculateNormals();
     finalMesh.RecalculateBounds();
 
@@ -284,6 +490,7 @@ private void CombineMeshes(GameObject[] objectsToCombine)
             DestroyImmediate(obj);
         }
     }
+
     Debug.Log($"Удалено {objectsToCombine.Length - 1} старых дубликатов");
 }
 
@@ -300,30 +507,52 @@ private void CombineMeshes(GameObject[] objectsToCombine)
         }
     }
 
-
-
-
     [ContextMenu("генерировать спираль")]
     public void SpiralObjects()
     {
         GameObject[] existingSteps = FindAllStepDuplicates();
-
         int N = existingSteps.Length;
-
         if (N == 0)
         {
             Debug.LogError("Не найдено дубликатов ступенек!");
             return;
         }
-        float stepLength = GetStepLength(existingSteps[0]);
+        float stepLength = offset1;
         float R = (N * (stepLength + offset1)) / (2f * Mathf.PI);
         Debug.Log($"Рассчитанный радиус: {R}, Ступенек: {N}, Длина ступеньки: {stepLength}");
         for (int i = 0; i < N; i++)
         {
             PlaceStepOnCircle(existingSteps[i], i, N, R);
         }
+        spiralApplied = true;
+        rotationApplied = false;
+        
+        UpdateSpiralGeneration();
     }
-    
+
+    private void UpdateRotationAroundOriginal()
+    {
+        if (currentDuplicates.Count == 0 || !rotationApplied) return;
+
+        var sortedDuplicates = currentDuplicates.OrderBy(go => GetDuplicateIndex(go)).ToList();
+        ApplyRotationAroundCenter(sortedDuplicates);
+    }
+
+    private void UpdateSpiralGeneration()
+    {
+        if (currentDuplicates.Count == 0 || !spiralApplied) return;
+
+        var sortedDuplicates = currentDuplicates.OrderBy(go => GetDuplicateIndex(go)).ToList();
+        int N = sortedDuplicates.Count;
+        float stepLength = offset1;
+        float R = (N * (stepLength + offset1)) / (2f * Mathf.PI);
+
+        for (int i = 0; i < N; i++)
+        {
+            PlaceStepOnCircle(sortedDuplicates[i], i, N, R);
+        }
+    }
+
     private GameObject[] FindAllStepDuplicates()
     {
         var allObjects = Resources.FindObjectsOfTypeAll<GameObject>()
@@ -348,7 +577,6 @@ private void CombineMeshes(GameObject[] objectsToCombine)
 
         return sortedObjects;
     }
-
     private float GetStepLength(GameObject step)
     {
         float length = 0f;
@@ -376,7 +604,7 @@ private void CombineMeshes(GameObject[] objectsToCombine)
         float angle = index * (2f * Mathf.PI / totalSteps);
         Vector3 position = new Vector3(
             radius * Mathf.Cos(angle),
-            index * offsethight, 
+            index * offsethight,
             radius * Mathf.Sin(angle)
         );
         Vector3 tangentDirection = new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle));
@@ -400,8 +628,6 @@ private void CombineMeshes(GameObject[] objectsToCombine)
     }
 
 
-
-
     [ContextMenu("Синхронизировать Blend Shapes")]
     public void SyncBlendShapes()
     {
@@ -416,7 +642,6 @@ private void CombineMeshes(GameObject[] objectsToCombine)
             Debug.Log("У оригинала нет SkinnedMeshRenderer");
             return;
         }
-
         int updatedCount = 0;
         GameObject[] allObjects = GameObject.FindObjectsOfType<GameObject>();
 
@@ -428,13 +653,8 @@ private void CombineMeshes(GameObject[] objectsToCombine)
                 updatedCount++;
             }
         }
-
         Debug.Log($"Синхронизировано Blend Shapes для {updatedCount} дубликатов");
     }
-
-
-
-
 
     private void SyncBlendShapesForDuplicate(SkinnedMeshRenderer original, GameObject duplicate)
     {
